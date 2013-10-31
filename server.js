@@ -7,9 +7,10 @@ var fs = require('fs')
   , http = require('http')
   , httpProxy = require('http-proxy')
   , path = require('path')
-  , GoogleStrategy = require('passport-google-oauth').OAuth2Strategy
+  , GitHubStrategy = require('passport-github').Strategy
   , redis = require('redis')
   , RedisStore = require('connect-redis')(express)
+  , request = require('request')
   , winston = require('winston');
 
 var proxy = new httpProxy.RoutingProxy();
@@ -41,33 +42,40 @@ passport.deserializeUser(function(obj, done) {
   done(null, obj);
 });
 
-// Check to see if the user profile is in an allowed domian.
-function inAllowedDomain(domain) {
-  return config.allowedDomains.indexOf(domain) !== -1;
-}
-
-// Check to see if the user profile is in an allowed email list.
-function inAllowedEmails(email) {
-  return config.allowedEmails.indexOf(email) !== -1;
+function onAllowedTeam(accessToken) {
+  userTeams = new Array;
+  request({
+    json: true,
+    url: "https://api.github.com/user/orgs",
+    qs: {
+      access_token: accessToken
+    }
+  }, function (error, response, body) {
+    if (!error && response.statusCode == 200) {
+      var teams = body;
+      for (var i in teams) {
+        userTeams.push(teams[i].login);
+      }
+      team = config.allowedTeam;
+      return userTeams.indexOf(team) !== -1;
+    }
+  });
 }
 
 // Use the GoogleStrategy within Passport.
 //   Strategies in Passport require a `verify` function, which accept
 //   credentials (in this case, an accessToken, refreshToken, and Google
 //   profile), and invoke a callback with a user object.
-passport.use(new GoogleStrategy({
-    clientID: config.googleClientId,
-    clientSecret: config.googleClientSecret,
-    callbackURL: "https://" + config.host + ":" + config.port + "/oauth2callback",
-    failureRedirect: "login"
+passport.use(new GitHubStrategy({
+    scope: "repo",
+    clientID: config.githubClientId,
+    clientSecret: config.githubClientSecret,
+    callbackURL: "https://" + config.host + ":" + config.port + "/auth/github/callback"
   },
   function(accessToken, refreshToken, profile, done) {
-    if (!inAllowedDomain(profile._json.hd)) {
-      logger.info('user from domain %s denied access to requested resource', profile._json.hd);
-      return done(null, null);
-    }
-    if (!inAllowedEmails(profile._json.email)) {
-      logger.info('%s denied access to requested resource', profile._json.email);
+    logger.info('dump = %s', profile._json)
+    if (!onAllowedTeam(accessToken)) {
+      logger.info('user not %s denied access to requested resource', profile._json.hd);
       return done(null, null);
     }
     return done(null, profile);
@@ -123,21 +131,18 @@ app.get('/account', function(req, res){
 //   request.  The first step in Google authentication will involve
 //   redirecting the user to google.com.  After authorization, Google
 //   will redirect the user back to this application at /auth/google/callback
-var googleConf = {
-  scope: [
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'https://www.googleapis.com/auth/userinfo.email'
-  ]
-};
-app.get('/auth/google', passport.authenticate('google', googleConf));
+app.get(
+  '/auth/github',
+  passport.authenticate('github'), function(req, res){
+});
 
 // GET /auth/google/callback
 //   Use passport.authenticate() as route middleware to authenticate the
 //   request.  If authentication fails, the user will be redirected back to the
 //   login page.  Otherwise, the primary route function function will be called,
 //   which, in this example, will redirect the user to the home page.
-app.get('/oauth2callback',
-  passport.authenticate('google', { failureRedirect: '/login' }),
+app.get('/auth/github/callback',
+  passport.authenticate('github', { failureRedirect: '/login' }),
   function(req, res) {
     if (req.session.redirectTo) {
       res.redirect(req.session.redirectTo);
@@ -213,8 +218,8 @@ server.on('listening', function() {
 function inURLWhiteList(url) {
   var whiteList = [
     '/login',
-    '/auth/google',
-    '/oauth2callback',
+    '/auth/github',
+    '/auth/github/callback',
     '/css/bootstrap.css'
   ];
   var url = url.split('?')[0];

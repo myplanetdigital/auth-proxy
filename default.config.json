@@ -11,8 +11,7 @@
   "sessionSecret": "secret",
   "imageURL": "http://nodejs.org/images/logos/nodejs.png",
   "imageAlt": "Node.js logo",
-  "allowedDomains": [],
-  "allowedEmails": [],
+  "allowedTeam": "",
   "googleClientId": "CHANGE ME",
   "googleClientSecret": "CHAGNE ME",
   "routes": {}
